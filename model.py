@@ -1,36 +1,50 @@
-
+import tensorflow as tf
+import keras
+import keras.backend as K
 from keras.models import Model
-from keras.layers.merge import Concatenate, Multiply
-from keras.layers import Activation, Input, Lambda
 from keras.regularizers import l2
-from keras.initializers import random_normal, constant
-from keras import layers
-from keras.layers import Dense, Flatten, Conv2D, UpSampling2D, Add, Conv2DTranspose
-from keras.layers import MaxPooling2D
-from keras.layers import GlobalMaxPooling2D
-from keras.layers import ZeroPadding2D
-from keras.layers import AveragePooling2D
-from keras.layers import GlobalAveragePooling2D
-from keras.layers import BatchNormalization
-from keras.preprocessing import image
-import keras.backend as K
-from keras.utils import layer_utils
-from keras.utils.data_utils import get_file
-from keras.applications.imagenet_utils import decode_predictions
-from keras.applications.imagenet_utils import preprocess_input
-# from keras.applications.imagenet_utils import _obtain_input_shape
-from keras.engine.topology import get_source_inputs
-from keras.engine import Layer, InputSpec
 from keras import initializers
-from keras.layers import add
-
-import mylayers
-import code
-import keras.backend as K
+from keras.initializers import random_normal, constant
+from keras.engine import Layer, InputSpec
+from keras.layers import Activation, Input, Conv2D, MaxPooling2D, ZeroPadding2D, BatchNormalization, add
+from keras.layers.merge import Concatenate, Multiply
 
 stages = 1
-np_branch3 = 7
+np_branch1 = 38
+np_branch2 = 19
+np_branch3 = 15
 
+class DeformableDeConv(keras.layers.Layer):
+	def __init__(self, kernel_size, stride, filter_num, *args, **kwargs):
+		self.stride = stride
+		self.filter_num = filter_num
+		self.kernel_size =kernel_size
+		super(DeformableDeConv, self).__init__(*args,**kwargs)
+
+	def build(self, input_shape):
+		# Create a trainable weight variable for this layer.
+		in_filters = self.filter_num
+		out_filters = self.filter_num
+		self.kernel = self.add_weight(name='kernel',
+									  shape=[self.kernel_size, self.kernel_size, out_filters, in_filters],
+									  initializer='uniform',
+									  trainable=True)
+
+		super(DeformableDeConv, self).build(input_shape)
+
+	def call(self, inputs, **kwargs):
+		source, target = inputs
+		target_shape = K.shape(target)
+		return tf.nn.conv2d_transpose(source, 
+									self.kernel, 
+									output_shape=target_shape, 
+									strides=self.stride, 
+									padding='SAME', 
+									data_format='NHWC')
+	def get_config(self):
+		config = {'kernel_size': self.kernel_size, 'stride': self.stride, 'filter_num': self.filter_num}
+		base_config = super(DeformableDeConv, self).get_config()
+		return dict(list(base_config.items()) + list(config.items()))
 
 class Scale(Layer):
     """Custom Layer for ResNet used for BatchNormalization.
@@ -279,17 +293,17 @@ def create_pyramid_features(C1, C2, C3, C4, C5, feature_size=256):
     P1 = Conv2D(feature_size, kernel_size=1, strides=1, padding='same', name='C1_reduced')(C1)
 
     # upsample P5 to get P5_up1
-    P5_up1 = mylayers.DeformableDeConv(name='P5_up1_deconv',
+    P5_up1 = DeformableDeConv(name='P5_up1_deconv',
                                              kernel_size=4,
                                              stride=[1,2,2,1],
                                              filter_num=feature_size)([P5,P4])
     # upsample P5_up1 to get P5_up2
-    P5_up2 = mylayers.DeformableDeConv(name='P5_up2_deconv',
+    P5_up2 = DeformableDeConv(name='P5_up2_deconv',
                                              kernel_size=4,
                                              stride=[1,2,2,1],
                                              filter_num=feature_size)([P5_up1,P3])
     # upsample P4 to get P4_up1
-    P4_up1 = mylayers.DeformableDeConv(name='P4_up1_deconv',
+    P4_up1 = DeformableDeConv(name='P4_up1_deconv',
                                              kernel_size=4,
                                              stride=[1,2,2,1],
                                              filter_num=feature_size)([P4,P3])
@@ -365,15 +379,19 @@ def stage1_segmentation_block(x, num_p, branch, weight_decay):
     x = relu(x)
     x = conv(x, 256, 1, "Mconv5_stage1_L%d" % branch, (weight_decay, 0))
     x = relu(x)
-    x = conv(x, num_p, 1, "PASCAL_HEAD_Mconv6_stage1_L%d" % branch, (weight_decay, 0))
+    x = conv(x, num_p, 1, "Mconv6_stage1_L%d" % branch, (weight_decay, 0))
     #x = sigmoid(x)
     x = Activation('softmax')(x)
 
     return x
 
-def apply_mask(x, mask3, num_p, stage, branch):
+def apply_mask(x, mask1, mask2, mask3, num_p, stage, branch):
     w_name = "weight_stage%d_L%d" % (stage, branch)
-    if num_p == np_branch3:
+    if num_p == np_branch1:
+        w = Multiply(name=w_name)([x, mask1])  # vec_weight
+    elif num_p == np_branch2:
+        w = Multiply(name=w_name)([x, mask2])  # vec_heat
+    elif num_p == np_branch3:
         w = Multiply(name=w_name)([x, mask3])  # seg
     else:
         assert False, "wrong number of layers num_p=%d " % num_p
@@ -383,15 +401,21 @@ def apply_mask(x, mask3, num_p, stage, branch):
 def get_training_model_resnet101(weight_decay, gpus=None):
 
     img_input_shape = (None, None, 3)
-    seg_input_shape = (None, None, 7)
+    vec_input_shape = (None, None, 38)
+    heat_input_shape = (None, None, 19)
+    seg_input_shape = (None, None, 15)
 
     inputs = []
     outputs = []
 
     img_input = Input(shape=img_input_shape)
+    vec_weight_input = Input(shape=vec_input_shape)
+    heat_weight_input = Input(shape=heat_input_shape)
     seg_weight_input = Input(shape=seg_input_shape)
 
     inputs.append(img_input)
+    inputs.append(vec_weight_input)
+    inputs.append(heat_weight_input)
     inputs.append(seg_weight_input)
 
     # resnet101
@@ -405,10 +429,20 @@ def get_training_model_resnet101(weight_decay, gpus=None):
     stage0_out = conv(stage0_out, 512, 3, "pyramid_2_CPM", (weight_decay, 0))
     stage0_out = relu(stage0_out)
 
+    # stage 1 - branch 1 (PAF)
+    stage1_branch1_out = stage1_block(stage0_out, np_branch1, 1, weight_decay)
+    w1 = apply_mask(stage1_branch1_out, vec_weight_input, heat_weight_input, seg_weight_input, np_branch1, 1, 1)
+
+    # stage 1 - branch 2 (confidence maps)
+    stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, weight_decay)
+    w2 = apply_mask(stage1_branch2_out, vec_weight_input, heat_weight_input, seg_weight_input, np_branch2, 1, 2)
+
     # stage 1 - branch 3 (semantic segmentation)
     stage1_branch3_out = stage1_segmentation_block(stage0_out, np_branch3, 3, weight_decay)
-    w3 = apply_mask(stage1_branch3_out, seg_weight_input, np_branch3, 1, 3)
+    w3 = apply_mask(stage1_branch3_out, vec_weight_input, heat_weight_input, seg_weight_input, np_branch3, 1, 3)
 
+    outputs.append(w1)
+    outputs.append(w2)
     outputs.append(w3)
 
 
@@ -439,10 +473,16 @@ def get_testing_model_resnet101():
     stage0_out = conv(stage0_out, 512, 3, "pyramid_2_CPM", (None, 0))
     stage0_out = relu(stage0_out)
 
+    # stage 1 - branch 1 (PAF)
+    stage1_branch1_out = stage1_block(stage0_out, np_branch1, 1, None)
+
+    # stage 1 - branch 2 (confidence maps)
+    stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, None)
+
     # stage 1 - branch 3 (semantic segmentation)
     stage1_branch3_out = stage1_segmentation_block(stage0_out, np_branch3, 3, None)
 
 
-    model = Model(inputs=[img_input], outputs=[stage1_branch3_out])
+    model = Model(inputs=[img_input], outputs=[stage1_branch1_out, stage1_branch2_out, stage1_branch3_out])
     return model
 
