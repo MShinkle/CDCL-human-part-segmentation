@@ -5,14 +5,8 @@ from keras.models import Model
 from keras.regularizers import l2
 from keras import initializers
 from keras.initializers import random_normal, constant
-from keras.engine import Layer, InputSpec
-from keras.layers import Activation, Input, Conv2D, MaxPooling2D, ZeroPadding2D, BatchNormalization, add
-from keras.layers.merge import Concatenate, Multiply
-
-stages = 1
-np_branch1 = 38
-np_branch2 = 19
-np_branch3 = 15
+from tensorflow.keras.layers import Layer, InputSpec
+from tensorflow.keras.layers import Activation, Input, Conv2D, MaxPooling2D, ZeroPadding2D, BatchNormalization, Concatenate, add
 
 class DeformableDeConv(keras.layers.Layer):
 	def __init__(self, kernel_size, stride, filter_num, *args, **kwargs):
@@ -32,7 +26,7 @@ class DeformableDeConv(keras.layers.Layer):
 
 		super(DeformableDeConv, self).build(input_shape)
 
-	def call(self, inputs, **kwargs):
+	def call(self, inputs):
 		source, target = inputs
 		target_shape = K.shape(target)
 		return tf.nn.conv2d_transpose(source, 
@@ -47,36 +41,6 @@ class DeformableDeConv(keras.layers.Layer):
 		return dict(list(base_config.items()) + list(config.items()))
 
 class Scale(Layer):
-    """Custom Layer for ResNet used for BatchNormalization.
-    
-    Learns a set of weights and biases used for scaling the input data.
-    the output consists simply in an element-wise multiplication of the input
-    and a sum of a set of constants:
-
-        out = in * gamma + beta,
-
-    where 'gamma' and 'beta' are the weights and biases larned.
-
-    Keyword arguments:
-    axis -- integer, axis along which to normalize in mode 0. For instance,
-        if your input tensor has shape (samples, channels, rows, cols),
-        set axis to 1 to normalize per feature map (channels axis).
-    momentum -- momentum in the computation of the exponential average 
-        of the mean and standard deviation of the data, for 
-        feature-wise normalization.
-    weights -- Initialization weights.
-        List of 2 Numpy arrays, with shapes:
-        `[(input_shape,), (input_shape,)]`
-    beta_init -- name of initialization function for shift parameter 
-        (see [initializers](../initializers.md)), or alternatively,
-        Theano/TensorFlow function to use for weights initialization.
-        This parameter is only relevant if you don't pass a `weights` argument.
-    gamma_init -- name of initialization function for scale parameter (see
-        [initializers](../initializers.md)), or alternatively,
-        Theano/TensorFlow function to use for weights initialization.
-        This parameter is only relevant if you don't pass a `weights` argument.
-        
-    """
     def __init__(self, weights=None, axis=-1, momentum = 0.9, beta_init='zero', gamma_init='one', **kwargs):
         self.momentum = momentum
         self.axis = axis
@@ -91,13 +55,13 @@ class Scale(Layer):
 
         self.gamma = K.variable(self.gamma_init(shape), name='%s_gamma'%self.name)
         self.beta = K.variable(self.beta_init(shape), name='%s_beta'%self.name)
-        self.trainable_weights = [self.gamma, self.beta]
+        # self.trainable_weights = [self.gamma, self.beta]
 
         if self.initial_weights is not None:
             self.set_weights(self.initial_weights)
             del self.initial_weights
 
-    def call(self, x, mask=None):
+    def call(self, x):
         input_shape = self.input_spec[0].shape
         broadcast_shape = [1] * len(input_shape)
         broadcast_shape[self.axis] = input_shape[self.axis]
@@ -110,59 +74,12 @@ class Scale(Layer):
         base_config = super(Scale, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-
-def mytransform(source, ref_tensor):
-    target_shape = K.shape(ref_tensor)
-    source_shape = K.shape(source)
-    return K.resize_images(source, target_shape[1]/source_shape[1],target_shape[2]/source_shape[2], "channels_last")
-    # return tensorflow.image.resize_images(source, (target_shape[1],target_shape[2]))
-
-def relu(x): return Activation('relu')(x)
-def sigmoid(x): return Activation('sigmoid')(x)
-
-def conv(x, nf, ks, name, weight_decay):
-    kernel_reg = l2(weight_decay[0]) if weight_decay else None
-    bias_reg = l2(weight_decay[1]) if weight_decay else None
-
-    x = Conv2D(nf, (ks, ks), padding='same', name=name,
-               kernel_regularizer=kernel_reg,
-               bias_regularizer=bias_reg,
-               kernel_initializer=random_normal(stddev=0.01),
-               bias_initializer=constant(0.0))(x)
-    return x
-
-def conv_stride(x, nf, ks, name, weight_decay, stride=(2,2)):
-    kernel_reg = l2(weight_decay[0]) if weight_decay else None
-    bias_reg = l2(weight_decay[1]) if weight_decay else None
-
-    x = Conv2D(nf, (ks, ks), padding='same', name=name, strides=stride,
-               kernel_regularizer=kernel_reg,
-               bias_regularizer=bias_reg,
-               kernel_initializer=random_normal(stddev=0.01),
-               bias_initializer=constant(0.0))(x)
-    return x
-
-def pooling(x, ks, st, name):
-    x = MaxPooling2D((ks, ks), strides=(st, st), name=name)(x)
-    return x
+def relu(x): 
+    return Activation('relu')(x)
 
 def identity_block(input_tensor, kernel_size, filters, stage, block):
-    """The identity_block is the block that has no conv layer at shortcut
-    
-    Keyword arguments
-    input_tensor -- input tensor
-    kernel_size -- defualt 3, the kernel size of middle conv layer at main path
-    filters -- list of integers, the nb_filters of 3 conv layer at main path
-    stage -- integer, current stage label, used for generating layer names
-    block -- 'a','b'..., current block label, used for generating layer names
-    
-    """
     eps = 1.1e-5
-    
-    if K.image_dim_ordering() == 'tf':
-        bn_axis = 3
-    else:
-        bn_axis = 1
+    bn_axis = 3
     
     nb_filter1, nb_filter2, nb_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -190,25 +107,8 @@ def identity_block(input_tensor, kernel_size, filters, stage, block):
 
 
 def conv_block(input_tensor, kernel_size, filters, stage, block, strides=(2, 2)):
-    """conv_block is the block that has a conv layer at shortcut
-    
-    Keyword arguments:
-    input_tensor -- input tensor
-    kernel_size -- defualt 3, the kernel size of middle conv layer at main path
-    filters -- list of integers, the nb_filters of 3 conv layer at main path
-    stage -- integer, current stage label, used for generating layer names
-    block -- 'a','b'..., current block label, used for generating layer names
-        
-    Note that from stage 3, the first conv layer at main path is with subsample=(2,2)
-    And the shortcut should have subsample=(2,2) as well
-    
-    """
     eps = 1.1e-5
-    
-    if K.image_dim_ordering() == 'tf':
-        bn_axis = 3
-    else:
-        bn_axis = 1
+    bn_axis = 3
     
     nb_filter1, nb_filter2, nb_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -239,10 +139,8 @@ def conv_block(input_tensor, kernel_size, filters, stage, block, strides=(2, 2))
     return x
 
 
-def ResNet101_graph(img_input, weight_decay):
+def ResNet101_graph(img_input):
     eps = 1.1e-5
-
-    branch = 0
     if K.image_data_format() == 'channels_last':
         bn_axis = 3
     else:
@@ -254,14 +152,12 @@ def ResNet101_graph(img_input, weight_decay):
     x = Scale(axis=bn_axis, name='scale_conv1')(x)
     x = Activation('relu', name='conv1_relu')(x)
     x = MaxPooling2D((3, 3), strides=(2, 2), name='pool1')(x)
-
     C1 = x
 
     # C2 --------------------------------------------------
     x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1))
     x = identity_block(x, 3, [64, 64, 256], stage=2, block='b')
     x = identity_block(x, 3, [64, 64, 256], stage=2, block='c')
-
     C2 = x
 
     # C3 --------------------------------------------------
@@ -331,7 +227,6 @@ def create_pyramid_features(C1, C2, C3, C4, C5, feature_size=256):
     P1_down2 = Conv2D(feature_size, kernel_size=3, strides=1, padding='same', name='P1_down2_head')(P1_down2)
     P1_down2 = relu(P1_down2)
 
-
     # Concatenate features at different levels
     pyramid_feat = []
     pyramid_feat.append(P5_up2)
@@ -340,10 +235,18 @@ def create_pyramid_features(C1, C2, C3, C4, C5, feature_size=256):
     pyramid_feat.append(P2_down1)
     pyramid_feat.append(P1_down2)
     feats = Concatenate()(pyramid_feat)
-
     return feats
 
+def conv(x, nf, ks, name, weight_decay):
+    kernel_reg = l2(weight_decay[0]) if weight_decay else None
+    bias_reg = l2(weight_decay[1]) if weight_decay else None
 
+    x = Conv2D(nf, (ks, ks), padding='same', name=name,
+               kernel_regularizer=kernel_reg,
+               bias_regularizer=bias_reg,
+               kernel_initializer=random_normal(stddev=0.01),
+               bias_initializer=constant(0.0))(x)
+    return x
 
 def stage1_block(x, num_p, branch, weight_decay):
     # Block 1
@@ -362,9 +265,7 @@ def stage1_block(x, num_p, branch, weight_decay):
     x = conv(x, 512, 1, "Mconv7_stage1_L%d" % branch, (weight_decay, 0))
     x = relu(x)
     x = conv(x, num_p, 1, "Mconv8_stage1_L%d" % branch, (weight_decay, 0))
-
     return x
-
 
 
 def stage1_segmentation_block(x, num_p, branch, weight_decay):
@@ -380,109 +281,27 @@ def stage1_segmentation_block(x, num_p, branch, weight_decay):
     x = conv(x, 256, 1, "Mconv5_stage1_L%d" % branch, (weight_decay, 0))
     x = relu(x)
     x = conv(x, num_p, 1, "Mconv6_stage1_L%d" % branch, (weight_decay, 0))
-    #x = sigmoid(x)
     x = Activation('softmax')(x)
-
     return x
 
-def apply_mask(x, mask1, mask2, mask3, num_p, stage, branch):
-    w_name = "weight_stage%d_L%d" % (stage, branch)
-    if num_p == np_branch1:
-        w = Multiply(name=w_name)([x, mask1])  # vec_weight
-    elif num_p == np_branch2:
-        w = Multiply(name=w_name)([x, mask2])  # vec_heat
-    elif num_p == np_branch3:
-        w = Multiply(name=w_name)([x, mask3])  # seg
-    else:
-        assert False, "wrong number of layers num_p=%d " % num_p
-    return w
-
-
-def get_training_model_resnet101(weight_decay, gpus=None):
-
-    img_input_shape = (None, None, 3)
-    vec_input_shape = (None, None, 38)
-    heat_input_shape = (None, None, 19)
-    seg_input_shape = (None, None, 15)
-
-    inputs = []
-    outputs = []
-
-    img_input = Input(shape=img_input_shape)
-    vec_weight_input = Input(shape=vec_input_shape)
-    heat_weight_input = Input(shape=heat_input_shape)
-    seg_weight_input = Input(shape=seg_input_shape)
-
-    inputs.append(img_input)
-    inputs.append(vec_weight_input)
-    inputs.append(heat_weight_input)
-    inputs.append(seg_weight_input)
-
-    # resnet101
-    C1, C2, C3, C4, C5 = ResNet101_graph(img_input, weight_decay)
-
-    stage0_out = create_pyramid_features(C1, C2, C3, C4, C5)
-
-    # Additional layers for learning multi-scale semantics
-    stage0_out = conv(stage0_out, 512, 3, "pyramid_1_CPM", (weight_decay, 0))
-    stage0_out = relu(stage0_out)
-    stage0_out = conv(stage0_out, 512, 3, "pyramid_2_CPM", (weight_decay, 0))
-    stage0_out = relu(stage0_out)
-
-    # stage 1 - branch 1 (PAF)
-    stage1_branch1_out = stage1_block(stage0_out, np_branch1, 1, weight_decay)
-    w1 = apply_mask(stage1_branch1_out, vec_weight_input, heat_weight_input, seg_weight_input, np_branch1, 1, 1)
-
-    # stage 1 - branch 2 (confidence maps)
-    stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, weight_decay)
-    w2 = apply_mask(stage1_branch2_out, vec_weight_input, heat_weight_input, seg_weight_input, np_branch2, 1, 2)
-
-    # stage 1 - branch 3 (semantic segmentation)
-    stage1_branch3_out = stage1_segmentation_block(stage0_out, np_branch3, 3, weight_decay)
-    w3 = apply_mask(stage1_branch3_out, vec_weight_input, heat_weight_input, seg_weight_input, np_branch3, 1, 3)
-
-    outputs.append(w1)
-    outputs.append(w2)
-    outputs.append(w3)
-
-
-    if gpus is None:
-        model = Model(inputs=inputs, outputs=outputs)
-    else:
-        import tensorflow as tf
-        with tf.device('/cpu:0'): #this model will not be actually used, it's template
-            model = Model(inputs=inputs, outputs=outputs)
-
-    return model
-
-
-
 def get_testing_model_resnet101():
-
+    np_branch1 = 38
+    np_branch2 = 19
+    np_branch3 = 15
     img_input_shape = (None, None, 3)
-
     img_input = Input(shape=img_input_shape)
-
-    C1, C2, C3, C4, C5 = ResNet101_graph(img_input, None)
-
+    C1, C2, C3, C4, C5 = ResNet101_graph(img_input)
     stage0_out = create_pyramid_features(C1, C2, C3, C4, C5)
-
     # Additional layers for learning multi-scale semantics
     stage0_out = conv(stage0_out, 512, 3, "pyramid_1_CPM", (None, 0))
     stage0_out = relu(stage0_out)
     stage0_out = conv(stage0_out, 512, 3, "pyramid_2_CPM", (None, 0))
     stage0_out = relu(stage0_out)
-
     # stage 1 - branch 1 (PAF)
     stage1_branch1_out = stage1_block(stage0_out, np_branch1, 1, None)
-
     # stage 1 - branch 2 (confidence maps)
     stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, None)
-
     # stage 1 - branch 3 (semantic segmentation)
     stage1_branch3_out = stage1_segmentation_block(stage0_out, np_branch3, 3, None)
-
-
     model = Model(inputs=[img_input], outputs=[stage1_branch1_out, stage1_branch2_out, stage1_branch3_out])
     return model
-
