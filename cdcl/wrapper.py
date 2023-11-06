@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import os
 from tqdm import tqdm
 from .model import get_testing_model_resnet101
 from .segment import process, process_parts
@@ -8,11 +9,11 @@ class CDCL_process():
     def __init__(self):
         self.model = None
 
-    def load_model(self, model_weights_path='d:/DNN_weights/cdcl_model/model_simulated_RGB_mgpu_scaling_append.0071.h5', verbose=True):
+    def load_model(self, model_weights_path='~/remote_mounts/pomcloud0/DNN_weights/cdcl_model/model_simulated_RGB_mgpu_scaling_append.0071.h5', verbose=True):
         if verbose:
             print('Loading model')
         self.model = get_testing_model_resnet101() 
-        self.model.load_weights(model_weights_path)
+        self.model.load_weights(os.path.expanduser(model_weights_path))
 
     def extract_parts(self, images, scales, target_size, thresholds='default', verbose=True, input_rgb=True):
         if self.model is None:
