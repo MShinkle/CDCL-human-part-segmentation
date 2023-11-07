@@ -9,11 +9,21 @@ class CDCL_process():
     def __init__(self):
         self.model = None
 
-    def load_model(self, model_weights_path='~/remote_mounts/pomcloud0/DNN_weights/cdcl_model/model_simulated_RGB_mgpu_scaling_append.0071.h5', verbose=True):
+    def download_weights(self, weights_dir='weights', verbose=True):
+        if verbose:
+            print('Downloading weights')
+        os.system('wget -O {}/cdcl_model.zip https://www.dropbox.com/s/sknafz1ep9vds1r/cdcl_model.zip?dl=1'.format(weights_dir))
+        os.system('unzip {}/cdcl_model.zip -d {}'.format(weights_dir, weights_dir))
+        os.system('rm {}/cdcl_model.zip'.format(weights_dir))
+
+    def load_model(self, model_weights_path='weights/model_simulated_RGB_mgpu_scaling_append.0071.h5', verbose=True):
         if verbose:
             print('Loading model')
+        if not os.path.exists(model_weights_path):
+            self.download_weights(weights_dir=os.path.dirname(model_weights_path), verbose=verbose)
+        weights = os.path.expanduser(model_weights_path)
         self.model = get_testing_model_resnet101() 
-        self.model.load_weights(os.path.expanduser(model_weights_path))
+        self.model.load_weights(weights)
 
     def extract_parts(self, images, scales, target_size, thresholds='default', verbose=True, input_rgb=True):
         if self.model is None:
