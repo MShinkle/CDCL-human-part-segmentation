@@ -10,11 +10,14 @@ class CDCL_process():
         self.model = None
 
     def download_weights(self, weights_dir='weights', verbose=True):
+        if not os.path.exists(weights_dir):
+            os.makedirs(weights_dir)
         if verbose:
             print('Downloading weights')
         os.system('wget -O {}/cdcl_model.zip https://www.dropbox.com/s/sknafz1ep9vds1r/cdcl_model.zip?dl=1'.format(weights_dir))
         os.system('unzip {}/cdcl_model.zip -d {}'.format(weights_dir, weights_dir))
         os.system('rm {}/cdcl_model.zip'.format(weights_dir))
+        os.system('rm -r {}/__MACOSX'.format(weights_dir))
 
     def load_model(self, model_weights_path='weights/model_simulated_RGB_mgpu_scaling_append.0071.h5', verbose=True):
         if verbose:
