@@ -1,14 +1,14 @@
 name: cdcl
 channels:
   - defaults
-  - conda-forge
+  # - conda-forge
 dependencies:
-  - python=3.9
-  - cudatoolkit=11.2
-  - cudnn=8.1.0
-  - tensorflow<2.11
+  - python==3.9
+  - tensorflow
   - ipykernel
-  - matplotlib
-  - opencv
   - tqdm
+  - matplotlib
+  - scipy
+  - opencv
+  - scikit-learn
   - scikit-image
