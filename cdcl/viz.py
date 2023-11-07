@@ -2,7 +2,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import colors
 
-def show_parts_overlay(seg, bg_img=None, part_colors=('magenta', 'yellow', 'blue', 'cyan', 'red', 'lightgreen')):
+def show_parts_overlay(seg, bg_img=None, part_colors=('magenta', 'yellow', 'blue', 'cyan', 'red', 'green')):
     seg = seg.squeeze()
     if part_colors is None:
         part_colors = ['white']*len(seg)
