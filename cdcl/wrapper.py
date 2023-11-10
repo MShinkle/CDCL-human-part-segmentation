@@ -28,7 +28,7 @@ class CDCL_process():
         self.model = get_testing_model_resnet101() 
         self.model.load_weights(weights)
 
-    def extract_parts(self, images, scales, target_size, thresholds='default', verbose=True, input_rgb=True):
+    def extract_parts(self, images, scales, target_size, thresholds='default', pooling_fn=np.nanmax, verbose=True, input_rgb=True):
         if self.model is None:
             self.load_model(verbose=verbose)
         if images.ndim==3:
@@ -43,6 +43,6 @@ class CDCL_process():
         all_parts = []
         for image in images:
             segmentation = process(image, self.model, scales=scales)
-            parts = process_parts(segmentation, target_size=target_size, thresholds=thresholds)
+            parts = process_parts(segmentation, target_size=target_size, thresholds=thresholds, pooling_fn=pooling_fn)
             all_parts.append(parts)
         return np.array(all_parts)
