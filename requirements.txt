@@ -1,0 +1,8 @@
+tensorflow
+ipykernel
+tqdm
+matplotlib
+scipy
+opencv-python
+scikit-learn
+scikit-image
